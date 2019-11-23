@@ -1,5 +1,7 @@
 CC=gcc
 CFLAGS=
 
-makegrsh: src/grsh.c
+make: src/grsh.c
 	$(CC) -o build/grsh src/grsh.c
+run: make
+	build/grsh
