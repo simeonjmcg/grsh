@@ -182,6 +182,11 @@ void process_cmd (pathnode_t **path, char *cmd, char *argstr, bool async) {
 }
 
 int main(int argc, char *argv[]) {
+	if (argc > 2) {
+		char error_message[30] = "An error has occurred\n";
+		write(STDERR_FILENO, error_message, strlen(error_message));
+		return 1;
+	}
 	pathnode_t *pathnodes = addPath("/bin");
 
 	char *buff = NULL;
