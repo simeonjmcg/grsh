@@ -8,6 +8,8 @@
 #include <sys/types.h>
 #include <fcntl.h>
 
+#include "strtok_quo.h"
+
 #define WHITESPACE " \t\n\v\f\r"
 
 typedef struct pathnode {
@@ -25,6 +27,22 @@ void delete_path(pathnode_t **head, int *len) {
 	}
 	(*head) = NULL;
 	(*len) = 0;
+}
+
+void shift_left(char *str) {
+	while (*str != '\0') {
+		*str = *(str+1);
+		str++;
+	}
+}
+
+void strip_esc(char *str) {
+	while (*str != '\0') {
+		if (*str == '\\') {
+			shift_left(str);
+		}
+		str++;
+	}
 }
 
 void trim_whitespace(char **str) {
@@ -103,10 +121,11 @@ void split_args (char ** dest, int len, char *cmd, char *argstr) {
 	}
 	int idx = 1;
 	char *saveptr = NULL;
-	char * arg = strtok_r(argstr, WHITESPACE, &saveptr);
+	char * arg = strtok_quo(argstr, &saveptr);
 	while (arg != NULL && idx < len - 1) {
+		strip_esc(arg);
 		dest[idx++] = arg;
-		arg = strtok_r(NULL, WHITESPACE, &saveptr);
+		arg = strtok_quo(NULL, &saveptr);
 	}
 }
 
@@ -133,69 +152,83 @@ void execute_cmd (char *full_cmd, char **argv, char *output, bool async) {
 	}
 }
 
-void process_cmd (pathnode_t **path, int *max_path, char *cmd, char *argstr, bool async) {
-	if (strcmp(cmd, "exit") == 0) {
-		exit(0);
-		return;
-	} else if (strcmp(cmd, "cd") == 0) {
-		if (argstr != NULL) {
-			trim_whitespace(&argstr);
-		}
-		if (chdir(argstr) == -1) {
-			char error_message[30] = "An error has occurred\n";
-			write(STDERR_FILENO, error_message, strlen(error_message));
-		}
-	} else if (strcmp(cmd, "path") == 0) {
-		delete_path(path, max_path);
-
-		pathnode_t * curr_node = NULL;
-		char *saveptr = NULL;
-		char *arg = strtok_r(argstr, WHITESPACE, &saveptr);
-		while (arg != NULL) {
-			pathnode_t * node = add_path(arg, max_path);
-			if (curr_node == NULL) {
-				(*path) = node;
-				curr_node = (*path);
-			} else {
-				curr_node->next = node;
-				curr_node = curr_node->next;
-			}
-			arg = strtok_r(NULL, WHITESPACE, &saveptr);
-		}
-	} else if(strlen(cmd) > 0) {
-		int full_path_len = (*max_path) + 1 + strlen(cmd) + 1;
-		char *full_path = (char *) malloc (sizeof (char) * full_path_len);
-		get_full_path(full_path, full_path_len, *path, cmd);
-
-		if (strlen(full_path) == 0) {
-			char error_message[30] = "An error has occurred\n";
-			write(STDERR_FILENO, error_message, strlen(error_message));
-			return;
-		}
-
-		char *rest = NULL;
-		char *args = NULL;
-		char *output_file = NULL;
-		while (isspace(argstr[0])) {
-			argstr++;
-		}
-		if (argstr[0] == '>') {
-			output_file = argstr + 1;
-		} else {
-			args = strtok_r(argstr, ">", &rest);
-			output_file = rest;
-		}
-		if (output_file != NULL) {
-			trim_whitespace(&output_file);
-		}
-
-		int len = count_words(args) + 2;
-		char **argv = (char **) malloc(sizeof(char *) * len);
-		split_args(argv, len, cmd, args);
-		execute_cmd(full_path, argv, output_file, async);
-		free(argv);
-		free(full_path);
+void process_cd(char *dir) {
+	if (dir != NULL) {
+		trim_whitespace(&dir);
 	}
+	if (chdir(dir) == -1) {
+		char error_message[30] = "An error has occurred\n";
+		write(STDERR_FILENO, error_message, strlen(error_message));
+	}
+}
+
+void process_path(pathnode_t **path, int *max_path, char *pathstr) {
+	delete_path(path, max_path);
+
+	pathnode_t * curr_node = NULL;
+	char *saveptr = NULL;
+	char *arg = strtok_quo(pathstr, &saveptr);
+	while (arg != NULL) {
+		pathnode_t * node = add_path(arg, max_path);
+		if (curr_node == NULL) {
+			(*path) = node;
+			curr_node = (*path);
+		} else {
+			curr_node->next = node;
+			curr_node = curr_node->next;
+		}
+		arg = strtok_quo(NULL, &saveptr);
+	}
+}
+
+void process_extern_cmd(pathnode_t **path, int *max_path, char *cmd, char *argstr, bool async) {
+	int full_path_len = (*max_path) + 1 + strlen(cmd) + 1;
+	char *full_path = (char *) malloc (sizeof (char) * full_path_len);
+	get_full_path(full_path, full_path_len, *path, cmd);
+
+	if (strlen(full_path) == 0) {
+		char error_message[30] = "An error has occurred\n";
+		write(STDERR_FILENO, error_message, strlen(error_message));
+		return;
+	}
+
+	char *rest = NULL;
+	char *args = NULL;
+	char *output_file = NULL;
+	while (isspace(argstr[0])) {
+		argstr++;
+	}
+	if (argstr[0] == '>') {
+		output_file = argstr + 1;
+	} else {
+		args = strtok_r(argstr, ">", &rest);
+		output_file = rest;
+	}
+	if (output_file != NULL) {
+		trim_whitespace(&output_file);
+	}
+
+	int len = count_words(args) + 2;
+	char **argv = (char **) malloc(sizeof(char *) * len);
+	split_args(argv, len, cmd, args);
+	execute_cmd(full_path, argv, output_file, async);
+	free(argv);
+	free(full_path);
+}
+
+bool process_cmd (pathnode_t **path, int *max_path, char *argstr, bool async) {
+	char *rest = NULL;
+	char *cmd = strtok_quo(argstr, &rest);
+	if (strcmp(cmd, "exit") == 0) {
+		return true;
+	} else if (strcmp(cmd, "cd") == 0) {
+		process_cd(rest);
+	} else if (strcmp(cmd, "path") == 0) {
+		process_path(path, max_path, rest);
+	} else if(strlen(cmd) > 0) {
+		process_extern_cmd(path, max_path, cmd, rest, async);
+	}
+	return false;
 }
 
 int main(int argc, char *argv[]) {
@@ -229,10 +262,10 @@ int main(int argc, char *argv[]) {
 		nextcmd = strtok_r(NULL, "&", &saveptr);
 		while (cmd != NULL) {
 			trim_whitespace(&cmd);
-			char *rest = NULL;
-			char *token = strtok_r(cmd, WHITESPACE, &rest);
-			if (token != NULL) {
-				process_cmd(&pathnodes, &max_path, cmd, rest, nextcmd != NULL);
+			bool should_exit = process_cmd(&pathnodes, &max_path, cmd, nextcmd != NULL);
+			if (should_exit) {
+				fclose(f);
+				return 0;
 			}
 			cmd = nextcmd;
 			nextcmd = strtok_r(NULL, "&", &saveptr);
